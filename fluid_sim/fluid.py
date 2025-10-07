@@ -52,6 +52,7 @@ class FluidSim:
         self.pressure = np.zeros(shape, dtype=np.float32)
         self.divergence = np.zeros(shape, dtype=np.float32)
         self.obstacles = np.zeros(shape, dtype=bool)
+        self._enforce_inflow()
 
     # ------------------------------------------------------------------
     # Public API
@@ -66,6 +67,7 @@ class FluidSim:
         for grid in (self.u, self.v, self.u_prev, self.v_prev, self.pressure, self.divergence):
             grid.fill(0.0)
         self.obstacles.fill(False)
+        self._enforce_inflow()
 
     def apply_brush(self, x: int, y: int, radius: int, draw: bool) -> None:
         """Add or remove solid obstacles within a circular brush footprint."""
@@ -84,6 +86,8 @@ class FluidSim:
             # Clear lingering velocity inside a freshly cleared region
             self.u[mask] = 0.0
             self.v[mask] = 0.0
+        self.u_prev[mask] = 0.0
+        self.v_prev[mask] = 0.0
 
     def step(self) -> None:
         """Advance the simulation by one time step."""
@@ -91,9 +95,20 @@ class FluidSim:
         dt = self.settings.time_step
         visc = self.settings.viscosity
 
-        self._diffuse(1, self.u_prev, self.u, visc, dt)
-        self._diffuse(2, self.v_prev, self.v, visc, dt)
-        self._project(self.u_prev, self.v_prev, self.u, self.v)
+        self._apply_inflow_source()
+        self._add_source(self.u, self.u_prev, dt)
+        self._add_source(self.v, self.v_prev, dt)
+
+        self.u_prev, self.u = self.u, self.u_prev
+        self._diffuse(1, self.u, self.u_prev, visc, dt)
+
+        self.v_prev, self.v = self.v, self.v_prev
+        self._diffuse(2, self.v, self.v_prev, visc, dt)
+
+        self._project(self.u, self.v, self.u_prev, self.v_prev)
+
+        self.u_prev, self.u = self.u, self.u_prev
+        self.v_prev, self.v = self.v, self.v_prev
 
         self._advect(1, self.u, self.u_prev, self.u_prev, self.v_prev, dt)
         self._advect(2, self.v, self.v_prev, self.u_prev, self.v_prev, dt)
@@ -101,6 +116,8 @@ class FluidSim:
 
         self._apply_obstacles()
         self._enforce_inflow()
+        self.u_prev.fill(0.0)
+        self.v_prev.fill(0.0)
 
     # ------------------------------------------------------------------
     # Core solver routines
@@ -216,7 +233,10 @@ class FluidSim:
             x[0, i] = -x[1, i] if b == 2 else x[1, i]
             x[h - 1, i] = -x[h - 2, i] if b == 2 else x[h - 2, i]
         for j in range(1, h - 1):
-            x[j, 0] = -x[j, 1] if b == 1 else x[j, 1]
+            if b == 1:
+                x[j, 0] = self.settings.inflow_speed if not self.obstacles[j, 0] else 0.0
+            else:
+                x[j, 0] = x[j, 1]
             x[j, w - 1] = -x[j, w - 2] if b == 1 else x[j, w - 2]
 
         x[0, 0] = 0.5 * (x[1, 0] + x[0, 1])
@@ -239,6 +259,18 @@ class FluidSim:
         mask = ~self.obstacles[:, 0]
         column[mask] = inflow_speed
         self.v[:, 0][mask] = 0.0
+
+    def _apply_inflow_source(self) -> None:
+        """Inject a horizontal velocity source along the inflow boundary."""
+
+        mask = ~self.obstacles[:, 0]
+        inflow = self.settings.inflow_speed
+        self.u_prev[:, 0][mask] = inflow
+        self.v_prev[:, 0][mask] = 0.0
+
+    @staticmethod
+    def _add_source(x: np.ndarray, s: np.ndarray, dt: float) -> None:
+        x += dt * s
 
 
 __all__ = ["FluidSettings", "FluidSim"]
