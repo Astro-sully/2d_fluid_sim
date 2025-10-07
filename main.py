@@ -9,7 +9,7 @@ import numpy as np
 import pygame
 
 from fluid_sim.fluid import FluidSettings, FluidSim
-from fluid_sim.ui import Button, ButtonGroup
+from fluid_sim.ui import Button, ButtonGroup, Slider
 
 Color = Tuple[int, int, int]
 
@@ -58,15 +58,18 @@ class FluidApp:
 
         self.brush_radius_pixels = 16
         self.brush_mode = "draw"
-        self.show_velocity = True
+        self.view_mode = "velocity"
         self.paused = False
         self.right_wall_sink = False
+        self.friction = 0.02
 
         self.current_resolution = self.RESOLUTIONS[1]
         self.sim = self._create_sim(self.current_resolution)
 
         self.buttons: list[Button] = []
         self.button_groups: list[ButtonGroup] = []
+        self.sliders: list[Slider] = []
+        self.view_buttons: dict[str, Button] = {}
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -77,6 +80,7 @@ class FluidApp:
         settings = FluidSettings(width=w, height=h)
         sim = FluidSim(settings)
         sim.set_right_wall_sink(self.right_wall_sink)
+        sim.set_friction(self.friction)
         return sim
 
     def _build_ui(self) -> None:
@@ -131,24 +135,55 @@ class FluidApp:
         self.button_groups.append(self.res_group)
         y = res_buttons[-1].rect.bottom + section_gap
 
-        # Toggle velocity field
+        # Display options
         add_section("Display")
-        velocity_button = Button(
-            "Show Velocity Field",
-            pygame.Rect(margin_x, y, button_width, button_height),
-            callback=lambda: self._toggle_velocity(),
-            toggle=True,
-            active=True,
-        )
-        self.velocity_button = velocity_button
-        self.buttons.append(velocity_button)
+        display_modes = [
+            ("Velocity Field", "velocity"),
+            ("Pressure Field", "pressure"),
+            ("Hide Field", "hidden"),
+        ]
+        view_buttons = []
+        for idx, (label, mode) in enumerate(display_modes):
+            button = Button(
+                label,
+                pygame.Rect(
+                    margin_x,
+                    y + idx * (button_height + gap),
+                    button_width,
+                    button_height,
+                ),
+                callback=lambda m=mode: self._set_view_mode(m),
+            )
+            self.view_buttons[mode] = button
+            view_buttons.append(button)
+        self.view_group = ButtonGroup("view", view_buttons)
+        self.view_group.set_active(self.view_buttons[self.view_mode])
+        self.button_groups.append(self.view_group)
+        y = view_buttons[-1].rect.bottom + section_gap
 
+        # Dynamics controls
+        add_section("Dynamics")
+        slider_rect = pygame.Rect(margin_x, y + 26, button_width, 14)
+        friction_slider = Slider(
+            "Friction",
+            slider_rect,
+            min_value=0.0,
+            max_value=0.1,
+            value=self.friction,
+            callback=self._set_friction,
+            precision=3,
+        )
+        self.friction_slider = friction_slider
+        self.sliders.append(friction_slider)
+        y = slider_rect.bottom + section_gap
+
+        # Toggles and actions
         right_wall_button = Button(
             "Right Wall Sink",
-            pygame.Rect(margin_x, velocity_button.rect.bottom + gap, button_width, button_height),
+            pygame.Rect(margin_x, y, button_width, button_height),
             callback=self._toggle_right_wall_sink,
             toggle=True,
-            active=False,
+            active=self.right_wall_sink,
         )
         self.right_wall_button = right_wall_button
         self.buttons.append(right_wall_button)
@@ -158,16 +193,14 @@ class FluidApp:
             pygame.Rect(margin_x, right_wall_button.rect.bottom + gap, button_width, button_height),
             callback=self._toggle_pause,
             toggle=True,
-            active=False,
+            active=self.paused,
         )
         self.pause_button = pause_button
         self.buttons.append(pause_button)
-        y = pause_button.rect.bottom + gap
 
-        # Reset button
         reset_button = Button(
             "Reset Simulation",
-            pygame.Rect(margin_x, y, button_width, button_height),
+            pygame.Rect(margin_x, pause_button.rect.bottom + gap, button_width, button_height),
             callback=self._reset_simulation,
         )
         self.buttons.append(reset_button)
@@ -185,9 +218,21 @@ class FluidApp:
         self.current_resolution = option
         self.sim = self._create_sim(option)
 
-    def _toggle_velocity(self) -> None:
-        self.show_velocity = not self.show_velocity
-        self.velocity_button.active = self.show_velocity
+    def _set_view_mode(self, mode: str) -> None:
+        if mode not in {"velocity", "pressure", "hidden"}:
+            return
+        self.view_mode = mode
+        if hasattr(self, "view_group") and mode in self.view_buttons:
+            self.view_group.set_active(self.view_buttons[mode])
+
+    def _cycle_view_mode(self) -> None:
+        modes = ["velocity", "pressure", "hidden"]
+        idx = modes.index(self.view_mode)
+        self._set_view_mode(modes[(idx + 1) % len(modes)])
+
+    def _set_friction(self, value: float) -> None:
+        self.friction = value
+        self.sim.set_friction(value)
 
     def _toggle_pause(self) -> None:
         self.paused = not self.paused
@@ -222,6 +267,10 @@ class FluidApp:
         self.screen.blit(radius_text, (20, self.brush_radius_pos))
 
         self.res_group.draw(self.screen, self.small_font, self.COLORS)
+        if hasattr(self, "view_group"):
+            self.view_group.draw(self.screen, self.small_font, self.COLORS)
+        if hasattr(self, "friction_slider"):
+            self.friction_slider.draw(self.screen, self.small_font, self.COLORS)
 
         for button in self.buttons:
             button.draw(self.screen, self.small_font, self.COLORS)
@@ -232,8 +281,9 @@ class FluidApp:
             "Scroll: adjust brush",
             "Press R: reset",
             "Space: pause/resume",
-            "V: toggle velocity",
-            "Display: Right wall sink",
+            "V: cycle display view",
+            "Slider: adjust friction",
+            "Toggle: Right wall sink",
         ]
         base_y = min(self.SCREEN_SIZE[1] - 140, self.instructions_top)
         for i, line in enumerate(instructions):
@@ -253,7 +303,28 @@ class FluidApp:
             int(start[2] + (end[2] - start[2]) * t),
         )
 
-    def _draw_velocity_field(self, surface: pygame.Surface) -> None:
+    def _pressure_to_color(self, value: float, max_abs: float) -> Color:
+        if max_abs <= 1e-5:
+            t = 0.0
+        else:
+            t = max(-1.0, min(1.0, value / max_abs))
+        neutral = (40, 45, 60)
+        positive = (240, 160, 120)
+        negative = (100, 150, 255)
+        if t >= 0:
+            return (
+                int(neutral[0] + (positive[0] - neutral[0]) * t),
+                int(neutral[1] + (positive[1] - neutral[1]) * t),
+                int(neutral[2] + (positive[2] - neutral[2]) * t),
+            )
+        t = abs(t)
+        return (
+            int(neutral[0] + (negative[0] - neutral[0]) * t),
+            int(neutral[1] + (negative[1] - neutral[1]) * t),
+            int(neutral[2] + (negative[2] - neutral[2]) * t),
+        )
+
+    def _draw_field(self, surface: pygame.Surface) -> None:
         sim = self.sim
         h, w = sim.settings.height, sim.settings.width
         cell_width = self.viewport_rect.width / w
@@ -261,7 +332,7 @@ class FluidApp:
 
         surface.fill(self.COLORS["viewport_bg"], self.viewport_rect)
 
-        if self.show_velocity:
+        if self.view_mode == "velocity":
             speeds = np.sqrt(sim.u ** 2 + sim.v ** 2)
             sample = speeds[~sim.obstacles]
             if sample.size:
@@ -281,6 +352,27 @@ class FluidApp:
                         pygame.draw.rect(surface, self.COLORS["obstacle"], rect)
                         continue
                     color = self._velocity_to_color(float(speeds[j, i]), max_speed)
+                    pygame.draw.rect(surface, color, rect)
+        elif self.view_mode == "pressure":
+            pressures = sim.pressure
+            sample = pressures[~sim.obstacles]
+            if sample.size:
+                max_abs = float(np.percentile(np.abs(sample), 97))
+            else:
+                max_abs = 0.0
+            if max_abs <= 1e-5:
+                max_abs = 1.0
+            for j in range(h):
+                for i in range(w):
+                    x0 = int(self.viewport_rect.left + i * cell_width)
+                    x1 = int(self.viewport_rect.left + (i + 1) * cell_width)
+                    y0 = int(self.viewport_rect.top + j * cell_height)
+                    y1 = int(self.viewport_rect.top + (j + 1) * cell_height)
+                    rect = pygame.Rect(x0, y0, max(1, x1 - x0), max(1, y1 - y0))
+                    if sim.obstacles[j, i]:
+                        pygame.draw.rect(surface, self.COLORS["obstacle"], rect)
+                        continue
+                    color = self._pressure_to_color(float(pressures[j, i]), max_abs)
                     pygame.draw.rect(surface, color, rect)
         else:
             for j in range(h):
@@ -324,6 +416,12 @@ class FluidApp:
                 return True
         return False
 
+    def _handle_slider_event(self, event: pygame.event.Event) -> bool:
+        for slider in self.sliders:
+            if slider.handle_event(event):
+                return True
+        return False
+
     def _apply_brush_from_mouse(self, draw: bool) -> None:
         mx, my = pygame.mouse.get_pos()
         if not self.viewport_rect.collidepoint(mx, my):
@@ -358,6 +456,9 @@ class FluidApp:
                 if event.type == pygame.QUIT:
                     running = False
                     break
+                if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+                    if self._handle_slider_event(event):
+                        continue
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if not self.viewport_rect.collidepoint(event.pos):
                         if self._handle_panel_event(event):
@@ -370,7 +471,7 @@ class FluidApp:
                     elif event.key == pygame.K_SPACE:
                         self._toggle_pause()
                     elif event.key == pygame.K_v:
-                        self._toggle_velocity()
+                        self._cycle_view_mode()
 
             self._handle_mouse()
 
@@ -379,7 +480,7 @@ class FluidApp:
 
             self.screen.fill(self.BACKGROUND_COLOR)
             self._draw_panel()
-            self._draw_velocity_field(self.screen)
+            self._draw_field(self.screen)
             self._draw_grid_overlay()
             self._draw_paused_indicator()
 

@@ -42,6 +42,7 @@ class FluidSim:
     divergence: np.ndarray = field(init=False)
     obstacles: np.ndarray = field(init=False)
     erase_right_wall: bool = False
+    friction: float = 0.02
 
     def __post_init__(self) -> None:
         h, w = self.settings.height, self.settings.width
@@ -77,6 +78,11 @@ class FluidSim:
         if enabled:
             self.u[:, -1] = 0.0
             self.v[:, -1] = 0.0
+
+    def set_friction(self, value: float) -> None:
+        """Adjust the per-step velocity damping factor."""
+
+        self.friction = float(np.clip(value, 0.0, 0.95))
 
     def apply_brush(self, x: int, y: int, radius: int, draw: bool) -> None:
         """Add or remove solid obstacles within a circular brush footprint."""
@@ -114,16 +120,17 @@ class FluidSim:
         self.v_prev, self.v = self.v, self.v_prev
         self._diffuse(2, self.v, self.v_prev, visc, dt)
 
-        self._project(self.u, self.v, self.u_prev, self.v_prev)
+        self._project(self.u, self.v, self.pressure, self.divergence)
 
         self.u_prev, self.u = self.u, self.u_prev
         self.v_prev, self.v = self.v, self.v_prev
 
         self._advect(1, self.u, self.u_prev, self.u_prev, self.v_prev, dt)
         self._advect(2, self.v, self.v_prev, self.u_prev, self.v_prev, dt)
-        self._project(self.u, self.v, self.u_prev, self.v_prev)
+        self._project(self.u, self.v, self.pressure, self.divergence)
 
         self._apply_obstacles()
+        self._apply_friction()
         self._enforce_inflow()
         self.u_prev.fill(0.0)
         self.v_prev.fill(0.0)
@@ -277,6 +284,17 @@ class FluidSim:
         x[self.obstacles] = 0.0
 
     def _apply_obstacles(self) -> None:
+        self.u[self.obstacles] = 0.0
+        self.v[self.obstacles] = 0.0
+
+    def _apply_friction(self) -> None:
+        if self.friction <= 0.0:
+            return
+        damping = max(0.0, 1.0 - self.friction)
+        if damping >= 1.0:
+            return
+        self.u *= damping
+        self.v *= damping
         self.u[self.obstacles] = 0.0
         self.v[self.obstacles] = 0.0
 
