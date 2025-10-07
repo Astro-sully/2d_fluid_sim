@@ -41,6 +41,7 @@ class FluidSim:
     pressure: np.ndarray = field(init=False)
     divergence: np.ndarray = field(init=False)
     obstacles: np.ndarray = field(init=False)
+    erase_right_wall: bool = False
 
     def __post_init__(self) -> None:
         h, w = self.settings.height, self.settings.width
@@ -68,6 +69,14 @@ class FluidSim:
             grid.fill(0.0)
         self.obstacles.fill(False)
         self._enforce_inflow()
+
+    def set_right_wall_sink(self, enabled: bool) -> None:
+        """Toggle whether the right boundary absorbs all velocity."""
+
+        self.erase_right_wall = enabled
+        if enabled:
+            self.u[:, -1] = 0.0
+            self.v[:, -1] = 0.0
 
     def apply_brush(self, x: int, y: int, radius: int, draw: bool) -> None:
         """Add or remove solid obstacles within a circular brush footprint."""
@@ -157,10 +166,24 @@ class FluidSim:
                 s1, s0 = x - i0, 1.0 - (x - i0)
                 t1, t0 = y - j0, 1.0 - (y - j0)
 
-                d[j, i] = (
-                    s0 * (t0 * d0[j0, i0] + t1 * d0[j1, i0])
-                    + s1 * (t0 * d0[j0, i1] + t1 * d0[j1, i1])
-                )
+                weights = [
+                    (t0 * s0, j0, i0),
+                    (t0 * s1, j0, i1),
+                    (t1 * s0, j1, i0),
+                    (t1 * s1, j1, i1),
+                ]
+                total = 0.0
+                value = 0.0
+                for weight, jj, ii in weights:
+                    if self.obstacles[jj, ii]:
+                        continue
+                    total += weight
+                    value += weight * d0[jj, ii]
+
+                if total > 1e-8:
+                    d[j, i] = value / total
+                else:
+                    d[j, i] = 0.0
 
         self._set_bnd(b, d)
 
@@ -237,12 +260,18 @@ class FluidSim:
                 x[j, 0] = self.settings.inflow_speed if not self.obstacles[j, 0] else 0.0
             else:
                 x[j, 0] = x[j, 1]
-            x[j, w - 1] = -x[j, w - 2] if b == 1 else x[j, w - 2]
+            if self.erase_right_wall:
+                x[j, w - 1] = 0.0
+            else:
+                x[j, w - 1] = -x[j, w - 2] if b == 1 else x[j, w - 2]
 
         x[0, 0] = 0.5 * (x[1, 0] + x[0, 1])
         x[0, w - 1] = 0.5 * (x[1, w - 1] + x[0, w - 2])
         x[h - 1, 0] = 0.5 * (x[h - 2, 0] + x[h - 1, 1])
-        x[h - 1, w - 1] = 0.5 * (x[h - 2, w - 1] + x[h - 1, w - 2])
+        if self.erase_right_wall:
+            x[h - 1, w - 1] = 0.0
+        else:
+            x[h - 1, w - 1] = 0.5 * (x[h - 2, w - 1] + x[h - 1, w - 2])
 
         # Solid cells completely zero out the field
         x[self.obstacles] = 0.0

@@ -12,6 +12,7 @@ obstacles that interact with the flow in real time.
 - Adjustable brush radius using the mouse scroll wheel.
 - Play/pause control and keyboard shortcuts for quickly adjusting the view.
 - Reset control to clear the simulation state.
+- Optional right-wall sink mode that absorbs any fluid reaching the outlet.
 
 ## Requirements
 
@@ -32,9 +33,9 @@ python main.py
 ```
 
 Use the left panel to select brushes, adjust resolution, toggle the velocity
-overlay, or pause/resume the simulation. Left-click and drag in the main
-viewport to paint obstacles, right-click to erase, and use the scroll wheel to
-change the brush size.
+overlay, enable the right-wall sink, or pause/resume the simulation. Left-click
+and drag in the main viewport to paint obstacles, right-click to erase, and use
+the scroll wheel to change the brush size.
 
 Keyboard shortcuts:
 

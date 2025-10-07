@@ -60,6 +60,7 @@ class FluidApp:
         self.brush_mode = "draw"
         self.show_velocity = True
         self.paused = False
+        self.right_wall_sink = False
 
         self.current_resolution = self.RESOLUTIONS[1]
         self.sim = self._create_sim(self.current_resolution)
@@ -74,7 +75,9 @@ class FluidApp:
     def _create_sim(self, option: ResolutionOption) -> FluidSim:
         w, h = option.grid_size
         settings = FluidSettings(width=w, height=h)
-        return FluidSim(settings)
+        sim = FluidSim(settings)
+        sim.set_right_wall_sink(self.right_wall_sink)
+        return sim
 
     def _build_ui(self) -> None:
         margin_x = 20
@@ -140,9 +143,19 @@ class FluidApp:
         self.velocity_button = velocity_button
         self.buttons.append(velocity_button)
 
+        right_wall_button = Button(
+            "Right Wall Sink",
+            pygame.Rect(margin_x, velocity_button.rect.bottom + gap, button_width, button_height),
+            callback=self._toggle_right_wall_sink,
+            toggle=True,
+            active=False,
+        )
+        self.right_wall_button = right_wall_button
+        self.buttons.append(right_wall_button)
+
         pause_button = Button(
             "Pause Simulation",
-            pygame.Rect(margin_x, velocity_button.rect.bottom + gap, button_width, button_height),
+            pygame.Rect(margin_x, right_wall_button.rect.bottom + gap, button_width, button_height),
             callback=self._toggle_pause,
             toggle=True,
             active=False,
@@ -184,6 +197,12 @@ class FluidApp:
     def _reset_simulation(self) -> None:
         self.sim.reset()
 
+    def _toggle_right_wall_sink(self) -> None:
+        self.right_wall_sink = not self.right_wall_sink
+        self.sim.set_right_wall_sink(self.right_wall_sink)
+        if hasattr(self, "right_wall_button"):
+            self.right_wall_button.active = self.right_wall_sink
+
     # ------------------------------------------------------------------
     # Rendering helpers
     # ------------------------------------------------------------------
@@ -214,6 +233,7 @@ class FluidApp:
             "Press R: reset",
             "Space: pause/resume",
             "V: toggle velocity",
+            "Display: Right wall sink",
         ]
         base_y = min(self.SCREEN_SIZE[1] - 140, self.instructions_top)
         for i, line in enumerate(instructions):
